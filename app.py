@@ -3,12 +3,19 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, timedelta, date, time as dtime
 from zoneinfo import ZoneInfo
 from jinja2 import DictLoader
-import csv, io, os, re
+import csv, io, os, re, base64
 
-# ======== CONFIG ========
+# =========================
+#  CONFIG / ENV SWITCHES
+# =========================
 TZ = ZoneInfo("America/Chicago")
 SECRET = os.environ.get("SECRET_KEY", "change-me")
 COOKIE_MAX_AGE = 14 * 3600
+
+# Optional Basic Auth (enable by setting BASIC_USER and BASIC_PASS in env)
+BASIC_USER = os.environ.get("BASIC_USER")
+BASIC_PASS = os.environ.get("BASIC_PASS")
+BASIC_AUTH_ENABLED = bool(BASIC_USER and BASIC_PASS)
 
 SHIFT_START_HOUR = 5   # 5 AM
 SHIFT_END_HOUR   = 19  # 7 PM
@@ -20,14 +27,27 @@ STATIONS = [
 ROLES    = ["Verifier 1","Verifier 2","Shipper"]
 REASONS  = ["Bathroom","Break","System Slow"]
 
-# ======== APP / DB ========
+# =========================
+#  APP / DB
+# =========================
 app = Flask(__name__)
+app.secret_key = SECRET
+
+# Prefer DATABASE_URL; else persist SQLite on /data (Render Disk) to survive restarts
 db_url = os.environ.get("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
-app.config["SQLALCHEMY_DATABASE_URI"] = db_url or "sqlite:///orders.db"
+
+# Use Render Disk for SQLite (persistent storage)
+default_sqlite = "sqlite:////data/orders.db"  # notice the 4 slashes
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url or default_sqlite
+
+
+# four leading slashes = absolute path
+default_sqlite = "sqlite:////data/orders.db" if os.path.isdir("/data") else "sqlite:///orders.db"
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url or default_sqlite
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.secret_key = SECRET
+
 db = SQLAlchemy(app)
 
 class Event(db.Model):
@@ -49,7 +69,44 @@ class ReasonEvent(db.Model):
 with app.app_context():
     db.create_all()
 
-# ======== TEMPLATES ========
+# =========================
+#  OPTIONAL BASIC AUTH
+# =========================
+def _unauthorized():
+    resp = Response("Authentication required", 401)
+    resp.headers["WWW-Authenticate"] = 'Basic realm="Restricted"'
+    return resp
+
+@app.before_request
+def _maybe_require_basic_auth():
+    if not BASIC_AUTH_ENABLED:
+        return
+    # Always allow health check without auth
+    if request.path == "/healthz":
+        return
+    auth = request.authorization
+    if auth and auth.username == BASIC_USER and auth.password == BASIC_PASS:
+        return
+    # Support Authorization: Basic <base64> header even if request.authorization is None
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(header.split(" ",1)[1]).decode("utf-8")
+            user, pwd = decoded.split(":",1)
+            if user == BASIC_USER and pwd == BASIC_PASS:
+                return
+        except Exception:
+            pass
+    return _unauthorized()
+
+# Health check (Render pings this sometimes)
+@app.route("/healthz")
+def healthz():
+    return "ok", 200
+
+# =========================
+#  TEMPLATES
+# =========================
 BASE = """
 <!doctype html><html><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -149,8 +206,8 @@ BASE = """
     "THANK YOU FOR YOUR HARD WORK AND DEDICATION. YOU MAKE A DIFFERENCE.",
     "KEEP UP THE GOOD WORK!!!"
   ];
-  const TYPE_SPEED = 45;           // ms per character
-  const ROTATE_EVERY = 30 * 60 * 1000;  // 30 minutes
+  const TYPE_SPEED = 45;                 // ms per character
+  const ROTATE_EVERY = 30 * 60 * 1000;   // 30 minutes
 
   const el = document.getElementById("motoText");
   let idx = 0;
@@ -170,7 +227,6 @@ BASE = """
     idx++;
     setTimeout(rotate, ROTATE_EVERY);
   }
-  // Start immediately on load
   rotate();
 </script>
 </body></html>
@@ -415,7 +471,9 @@ DASH = """
 
 app.jinja_loader = DictLoader({"base.html": BASE})
 
-# ======== HELPERS ========
+# =========================
+#  HELPERS
+# =========================
 def now_local() -> datetime:
     return datetime.now(tz=TZ)
 
@@ -492,7 +550,9 @@ def today_rows_for(station: str, role: str, stamp: str):
             for i in range(len(labels))]
     return rows, hour_order_count, shift_start_loc, shift_end_loc
 
-# ======== ROUTES ========
+# =========================
+#  ROUTES
+# =========================
 @app.route("/", methods=["GET"])
 def home():
     station = cookie_get("station")
@@ -583,7 +643,9 @@ def tap_reason():
     rows, hoc, *_ = today_rows_for(station, role, stamp)
     return jsonify(ok=True, hour_order_count=hoc, today_rows=rows, message=f"{reason} logged")
 
-# ======== DASHBOARD ========
+# =========================
+#  DASHBOARD
+# =========================
 @app.route("/dashboard")
 def dashboard():
     day = now_local().date()
@@ -662,7 +724,9 @@ def dashboard():
         title="Dashboard"
     )
 
-# ======== CSV EXPORTS ========
+# =========================
+#  CSV EXPORTS
+# =========================
 @app.route("/export/today.csv")
 def export_today_csv():
     day = now_local().date()
