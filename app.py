@@ -261,7 +261,7 @@ HOME = """
         </div>
         <div style="margin-top:14px;">
           <button class="btn btn-primary" type="submit">Continue</button>
-          <p class="muted">We’ll remember Station + Role + Stamp on this device for 12 hours.</p>
+          <p class="muted">We’ll remember Station + Role + Stamp on this device for 14 hours.</p>
         </div>
       </form>
     </div>
