@@ -33,17 +33,16 @@ REASONS  = ["Bathroom","Break","System Slow"]
 app = Flask(__name__)
 app.secret_key = SECRET
 
+# Cookie/session hardening
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
 # Prefer DATABASE_URL; else persist SQLite on /data (Render Disk) to survive restarts
 db_url = os.environ.get("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
 
-# Use Render Disk for SQLite (persistent storage)
-default_sqlite = "sqlite:////data/orders.db"  # notice the 4 slashes
-app.config["SQLALCHEMY_DATABASE_URI"] = db_url or default_sqlite
-
-
-# four leading slashes = absolute path
+# Four leading slashes = absolute path; use /data if mounted (Render)
 default_sqlite = "sqlite:////data/orders.db" if os.path.isdir("/data") else "sqlite:///orders.db"
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url or default_sqlite
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -98,6 +97,16 @@ def _maybe_require_basic_auth():
         except Exception:
             pass
     return _unauthorized()
+
+# Security headers (cheap, strong defaults)
+@app.after_request
+def security_headers(resp):
+    resp.headers['X-Frame-Options'] = 'DENY'
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    resp.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    # CSP allows inline styles (for your templates) but otherwise self
+    resp.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self' 'unsafe-inline';"
+    return resp
 
 # Health check (Render pings this sometimes)
 @app.route("/healthz")
@@ -498,7 +507,10 @@ def utc_from_local(dt_local: datetime) -> datetime:
     return dt_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
 
 def cookie_get(name): return request.cookies.get(name)
-def set_cookie(resp, key, value): resp.set_cookie(key, value, max_age=COOKIE_MAX_AGE, httponly=True, samesite="Lax")
+def set_cookie(resp, key, value):
+    # secure=True ensures HTTPS-only cookies on Render
+    resp.set_cookie(key, value, max_age=COOKIE_MAX_AGE, httponly=True, samesite="Lax", secure=True)
+
 def is_valid_stamp(stamp: str) -> bool: return bool(re.fullmatch(r"\d{4}", stamp or ""))
 
 def today_rows_for(station: str, role: str, stamp: str):
