@@ -104,8 +104,12 @@ def security_headers(resp):
     resp.headers['X-Frame-Options'] = 'DENY'
     resp.headers['X-Content-Type-Options'] = 'nosniff'
     resp.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    # CSP allows inline styles (for your templates) but otherwise self
-    resp.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self' 'unsafe-inline';"
+    # Allow inline styles (needed by templates) and inline scripts (your banner + onclick print)
+    resp.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline';"
+    )
     return resp
 
 # Health check (Render pings this sometimes)
