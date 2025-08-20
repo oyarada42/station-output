@@ -810,5 +810,15 @@ def export_station_totals_csv():
 def inject_footer():
     return dict(copyright="© 2025 Abdi. All rights reserved.")
 
+# Footer copyright (will appear on every page)
+@app.context_processor
+def inject_footer():
+    return dict(copyright="© 2025 Abdi. All rights reserved.")
+
+import admin_app                  # loads the file (no circular import now)
+admin_app.init_app(globals())     # give it db, Event, ReasonEvent, etc.
+app.register_blueprint(admin_app.admin_bp)   # mount /admin
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
